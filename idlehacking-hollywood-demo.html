@@ -1,0 +1,1179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Idle Hacking — Hollywood Mode (Demo)</title>
+<meta name="description" content="Concept demo for an idle/screensaver mode that visualizes ongoing hacking activity using Idle Hacking's vocabulary, palette, and WebSocket protocol shape.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;700&family=VT323&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     IDLE HACKING — HOLLYWOOD MODE (DEMO)
+     Mirrors the game's CSS-variable theme architecture exactly,
+     so this could drop in alongside the existing 16 themes
+     and inherit whichever theme the player has selected.
+     ============================================================ */
+
+  :root {
+    /* default = phosphor green CRT, matches Idle Hacking's :root */
+    --bg-color:        #050505;
+    --text-color:      #00ff00;
+    --dim-color:       #005500;
+    --accent-color:    #ccffcc;
+    --warning-color:   #ffff00;
+    --error-color:     #ff4444;
+    --special-color:   #00ffff;
+    --rarity-basic:    #666666;
+    --rarity-common:   #ffffff;
+    --rarity-uncommon: #00cc00;
+    --rarity-rare:     #3399ff;
+    --rarity-epic:     #cc66ff;
+  }
+
+  /* A few canonical Idle Hacking themes for the picker — same hex values
+     the dev is already using in themes.css. Easy to extend to all 16. */
+  body.theme-amber {
+    --bg-color:#1a0a00;--text-color:#ffb000;--dim-color:#553300;
+    --accent-color:#ffd066;--warning-color:#ffe066;--error-color:#ff4444;
+    --special-color:#ffaa66;--rarity-uncommon:#ffaa00;
+    --rarity-rare:#ffd066;--rarity-epic:#ff8855;
+  }
+  body.theme-dracula {
+    --bg-color:#282a36;--text-color:#f8f8f2;--dim-color:#6272a4;
+    --accent-color:#bd93f9;--warning-color:#f1fa8c;--error-color:#ff5555;
+    --special-color:#8be9fd;--rarity-uncommon:#50fa7b;
+    --rarity-rare:#8be9fd;--rarity-epic:#ff79c6;
+  }
+  body.theme-nord {
+    --bg-color:#2e3440;--text-color:#d8dee9;--dim-color:#4c566a;
+    --accent-color:#88c0d0;--warning-color:#ebcb8b;--error-color:#bf616a;
+    --special-color:#81a1c1;--rarity-uncommon:#a3be8c;
+    --rarity-rare:#88c0d0;--rarity-epic:#b48ead;
+  }
+  body.theme-synthwave {
+    --bg-color:#241b2f;--text-color:#fede5d;--dim-color:#5a4a78;
+    --accent-color:#ff7edb;--warning-color:#fede5d;--error-color:#fe4450;
+    --special-color:#36f9f6;--rarity-uncommon:#72f1b8;
+    --rarity-rare:#36f9f6;--rarity-epic:#ff7edb;
+  }
+  body.theme-tokyo-night {
+    --bg-color:#1a1b26;--text-color:#c0caf5;--dim-color:#414868;
+    --accent-color:#7aa2f7;--warning-color:#e0af68;--error-color:#f7768e;
+    --special-color:#7dcfff;--rarity-uncommon:#9ece6a;
+    --rarity-rare:#7dcfff;--rarity-epic:#bb9af7;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; overflow: hidden; }
+
+  body {
+    background: var(--bg-color);
+    color: var(--text-color);
+    font-family: 'IBM Plex Mono', ui-monospace, monospace;
+    font-size: 12px;
+    line-height: 1.4;
+    display: grid;
+    grid-template-rows: 36px 1fr 26px;
+    gap: 4px;
+    padding: 4px;
+  }
+
+  /* CRT scanline + flicker overlay (same idea as the game's .crt-overlay) */
+  body::before {
+    content:'';
+    position: fixed; inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      rgba(0,0,0,0)   0px,
+      rgba(0,0,0,0)   2px,
+      rgba(0,0,0,0.18) 2px,
+      rgba(0,0,0,0.18) 4px
+    );
+    pointer-events: none;
+    z-index: 9999;
+    animation: flicker 0.18s infinite;
+  }
+  @keyframes flicker { 0%,100%{opacity:1;} 50%{opacity:.96;} }
+
+  /* ----- Header / Footer ----- */
+  .header, .footer {
+    border: 1px solid var(--dim-color);
+    padding: 4px 10px;
+    font-family: 'VT323', monospace;
+    font-size: 18px;
+    letter-spacing: 1px;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+  .header { display: flex; align-items: center; gap: 14px; }
+  .header .label { color: var(--dim-color); }
+  .header .value { color: var(--accent-color); }
+  .header .blink { color: var(--text-color); animation: blink 1s steps(2) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  /* ----- Grid of panes ----- */
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    grid-template-rows: 1fr 1fr;
+    gap: 4px;
+    overflow: hidden;
+  }
+
+  .pane {
+    border: 1px solid var(--dim-color);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: rgba(0,0,0,0.35);
+  }
+  .pane-title {
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--dim-color);
+    font-family: 'VT323', monospace;
+    font-size: 16px;
+    color: var(--accent-color);
+    display: flex;
+    justify-content: space-between;
+    letter-spacing: 1px;
+  }
+  .pane-title .indicator {
+    color: var(--text-color);
+    animation: blink 0.85s steps(2) infinite;
+  }
+  .pane-body {
+    flex: 1;
+    overflow: hidden;
+    padding: 6px 8px;
+    font-size: 11.5px;
+    line-height: 1.35;
+    white-space: pre;
+    position: relative;
+  }
+  .pane-body .line { display: block; }
+
+  /* ----- Color helpers (mirror game tokens) ----- */
+  .dim  { color: var(--dim-color); }
+  .acc  { color: var(--accent-color); }
+  .warn { color: var(--warning-color); }
+  .err  { color: var(--error-color); }
+  .spec { color: var(--special-color); }
+  .r-basic    { color: var(--rarity-basic); }
+  .r-common   { color: var(--rarity-common); }
+  .r-uncommon { color: var(--rarity-uncommon); }
+  .r-rare     { color: var(--rarity-rare); }
+  .r-epic     { color: var(--rarity-epic); text-shadow: 0 0 6px var(--rarity-epic); }
+  /* Chips: rare bonus currency from combat. Distinct hue from credits/xp. */
+  .chip       { color: #ff9933; text-shadow: 0 0 4px rgba(255,153,51,0.5); }
+
+  /* ----- Footer chyron ----- */
+  .footer { color: var(--dim-color); font-size: 16px; }
+  .chyron {
+    display: inline-block;
+    animation: scroll 36s linear infinite;
+    padding-left: 100%;
+  }
+  @keyframes scroll {
+    0%   { transform: translateX(0); }
+    100% { transform: translateX(-100%); }
+  }
+
+  /* ----- UI controls (corner): CRT toggle + theme picker ----- */
+  .ui-controls {
+    position: fixed;
+    top: 8px; right: 12px;
+    z-index: 10000;
+    display: flex;
+    gap: 6px;
+  }
+  .ui-btn, .theme-picker {
+    background: var(--bg-color);
+    border: 1px solid var(--dim-color);
+    color: var(--text-color);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    padding: 2px 8px;
+    cursor: pointer;
+  }
+  .ui-btn:hover, .theme-picker:hover {
+    border-color: var(--accent-color);
+    color: var(--accent-color);
+  }
+  /* When .no-crt is on the body, the scanline+flicker overlay is hidden. */
+  body.no-crt::before { display: none; }
+
+  /* ----- Pane-specific accents ----- */
+  .hex-addr  { color: var(--dim-color); }
+  .hex-byte  { color: var(--text-color); }
+  .hex-ascii { color: var(--accent-color); }
+
+  /* ----- Random alert flash overlay ----- */
+  .alert-flash {
+    position: fixed;
+    top: 50%; left: 50%; transform: translate(-50%,-50%);
+    border: 2px solid var(--error-color);
+    color: var(--error-color);
+    background: rgba(0,0,0,0.9);
+    padding: 14px 28px;
+    font-family: 'VT323', monospace;
+    font-size: 28px;
+    letter-spacing: 3px;
+    z-index: 10001;
+    box-shadow: 0 0 30px var(--error-color);
+    animation: alert-pulse 0.4s steps(2) 5;
+  }
+  @keyframes alert-pulse { 50% { opacity: 0.4; } }
+
+  /* ----- Skill picker (resource pane) ----- */
+  #resources { white-space: normal; }
+  .skill-row { display: flex; gap: 4px; margin-bottom: 6px; }
+  .skill-btn {
+    flex: 1;
+    padding: 3px 4px;
+    background: transparent;
+    border: 1px solid var(--dim-color);
+    color: var(--dim-color);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 1px;
+    cursor: pointer;
+  }
+  .skill-btn:hover { color: var(--text-color); border-color: var(--text-color); }
+  .skill-btn.active {
+    border-color: var(--accent-color);
+    color: var(--accent-color);
+    box-shadow: 0 0 6px rgba(255,255,255,0.18);
+  }
+  .resource-stats { white-space: pre; }
+
+  /* ----- Operator console ----- */
+  #terminal { white-space: pre-wrap; word-break: break-word; }
+
+  /* ----- Log-style panes: anchor newest line to the visible bottom -----
+     With flex-end + overflow:hidden, overflow happens at the TOP and
+     the newest line is always glued to the bottom edge. The existing
+     trim loops still run as a memory-management backup. */
+  #combat, #recon, #hexdump, #terminal, #loot {
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+  }
+</style>
+</head>
+
+<body class="theme-green">
+
+<div class="ui-controls">
+  <button class="ui-btn" id="crt-toggle" type="button" onclick="toggleCRT()">CRT: ON</button>
+  <select class="theme-picker" onchange="setTheme(this.value)">
+    <option value="theme-green">PHOSPHOR GREEN</option>
+    <option value="theme-amber">PHOSPHOR AMBER</option>
+    <option value="theme-dracula">DRACULA</option>
+    <option value="theme-nord">NORD</option>
+    <option value="theme-tokyo-night">TOKYO NIGHT</option>
+    <option value="theme-synthwave">SYNTHWAVE</option>
+  </select>
+</div>
+
+<div class="header">
+  <span class="value">IDLE HACKING</span>
+  <span class="dim">//</span>
+  <span class="label">OPERATOR</span>     <span class="value" id="op-name">trgKai</span>
+  <span class="dim">//</span>
+  <span class="label">ZONE</span>         <span class="value" id="op-zone">LOCAL NETWORK Lv1+</span>
+  <span class="dim">//</span>
+  <span class="label">STREAK</span>       <span class="value" id="op-streak">0</span>
+  <span class="dim">//</span>
+  <span class="label">SYNDICATE</span>    <span class="value" id="op-syndicate">[ASCND] Ascend</span>
+  <span class="dim">//</span>
+  <span class="label">UPTIME</span>       <span class="value" id="op-uptime">00:00:00</span>
+  <span class="dim">//</span>
+  <span class="blink">●</span> <span class="value">ONLINE</span>
+</div>
+
+<div class="grid">
+  <div class="pane"><div class="pane-title">COMBAT FEED <span class="indicator">●</span></div><div class="pane-body" id="combat"></div></div>
+  <div class="pane"><div class="pane-title">NETWORK RECON <span class="indicator">●</span></div><div class="pane-body" id="recon"></div></div>
+  <div class="pane"><div class="pane-title">RESOURCE TELEMETRY <span class="indicator">●</span></div><div class="pane-body" id="resources"></div></div>
+  <div class="pane"><div class="pane-title">MEMORY DUMP 0x7FFD4A3F <span class="indicator">●</span></div><div class="pane-body" id="hexdump"></div></div>
+  <div class="pane"><div class="pane-title">OPERATOR CONSOLE <span class="indicator">●</span></div><div class="pane-body" id="terminal"></div></div>
+  <div class="pane"><div class="pane-title">LOOT STREAM <span class="indicator">●</span></div><div class="pane-body" id="loot"></div></div>
+</div>
+
+<div class="footer">
+  <div class="chyron">
+    [BREAKING] Operator trgKai ranked #1 in Megacorp Nexus zone clears  ▌▌▌
+    [SYNDICATE] DARK_PROTOCOL declared war on NULL_OVERRIDE  ▌▌▌
+    [MARKET] Reinforced Kernel of Velocity (T2) sold for 1.4M credits  ▌▌▌
+    [EVENT] Rogue Worm Containment begins in 14:23  ▌▌▌
+    [PATCH] Server v1777321250 deployed — affix tier rebalance live  ▌▌▌
+    [LEADERBOARD] New record: 99,142 win streak in Local Network  ▌▌▌
+    [CONTRACT] Daily board cleared by 1,247 operators today  ▌▌▌
+    [ACHIEVEMENT] T9 milestone unlocked by FIRST_LIGHT  ▌▌▌
+  </div>
+</div>
+
+<script>
+/* ============================================================
+   UI CONTROLS — theme switcher (preserves other body classes)
+   and a persistent CRT scanline toggle.
+   ============================================================ */
+function setTheme(name) {
+  document.body.className = document.body.className
+    .replace(/\btheme-\S+/g, '')
+    .trim();
+  document.body.classList.add(name);
+}
+function toggleCRT() {
+  const off = document.body.classList.toggle('no-crt');
+  const btn = document.getElementById('crt-toggle');
+  if (btn) btn.textContent = `CRT: ${off ? 'OFF' : 'ON'}`;
+  try { localStorage.setItem('hollywood_crt', off ? 'off' : 'on'); } catch (e) {}
+}
+/* Restore the saved CRT preference on load. */
+try {
+  if (localStorage.getItem('hollywood_crt') === 'off') {
+    document.body.classList.add('no-crt');
+    const btn = document.getElementById('crt-toggle');
+    if (btn) btn.textContent = 'CRT: OFF';
+  }
+} catch (e) {}
+
+/* ============================================================
+   GAME VOCABULARY — pulled directly from Idle Hacking's help docs
+   so the dev can immediately recognize the surface area.
+   ============================================================ */
+const ITEM_TYPES = ['Payload','Firewall','Analyzer','Shell','Driver','Router','Daemon','Kernel'];
+const RESOURCES  = ['Snippets','Cycles','Hashes','Packets'];
+const ZONES = [
+  'Local Network','Coffee Shop WiFi','Small Business Server','Corporate Network',
+  'Data Center','Government Mainframe','Megacorp Nexus','Rebooted Mainframe'
+];
+/* Zone data drives header rotation AND reward scaling. Multipliers
+   match the in-game zone reference; enemy level ranges are tuned so
+   each rotation produces visibly different reward magnitudes. */
+const ZONE_DATA = [
+  { name: 'LOCAL NETWORK',         lvl: '1+',     levelMin: 1,     levelMax: 50,    creditsMult: 1.0,  rarityMult: 1.0  },
+  { name: 'COFFEE SHOP WIFI',      lvl: '50+',    levelMin: 50,    levelMax: 200,   creditsMult: 1.1,  rarityMult: 1.15 },
+  { name: 'SMALL BUSINESS SERVER', lvl: '250+',   levelMin: 250,   levelMax: 550,   creditsMult: 1.2,  rarityMult: 1.3  },
+  { name: 'CORPORATE NETWORK',     lvl: '600+',   levelMin: 600,   levelMax: 1400,  creditsMult: 1.35, rarityMult: 1.5  },
+  { name: 'DATA CENTER',           lvl: '1500+',  levelMin: 1500,  levelMax: 3500,  creditsMult: 1.5,  rarityMult: 1.7  },
+  { name: 'GOVERNMENT MAINFRAME',  lvl: '4000+',  levelMin: 4000,  levelMax: 9000,  creditsMult: 1.75, rarityMult: 1.9  },
+  { name: 'MEGACORP NEXUS',        lvl: '10000+', levelMin: 10000, levelMax: 25000, creditsMult: 2.0,  rarityMult: 2.2  },
+  { name: 'REBOOTED MAINFRAME',    lvl: '30000+', levelMin: 30000, levelMax: 60000, creditsMult: 2.1,  rarityMult: 2.4  }
+];
+const RARITIES = [
+  { name:'Basic',    cls:'r-basic',    w:30 },
+  { name:'Common',   cls:'r-common',   w:35 },
+  { name:'Uncommon', cls:'r-uncommon', w:20 },
+  { name:'Rare',     cls:'r-rare',     w:12 },
+  { name:'Epic',     cls:'r-epic',     w: 3 }
+];
+const PREFIXES = ['Reinforced','Polymorphic','Encrypted','Obfuscated','Hardened',
+                  'Recursive','Patched','Forked','Stealth','Quantum','Zero-Day',
+                  'Rootkit','Compiled','Pristine','Volatile','Distilled'];
+const SUFFIXES = ['Velocity','Latency','Throughput','Persistence','Privilege',
+                  'Injection','Exfiltration','Bandwidth','Symmetry','Eclipse',
+                  'Recursion','Entropy','the Sandbox','the Daemon','the Backdoor',
+                  'the Kernel Panic'];
+const ENEMIES = ['Network Drone','Script Kiddie','Honeypot','IDS Sentinel','Black ICE',
+                 'Logic Bomb','Crypter','Rogue AI','Worm Cluster','Botnet Node',
+                 'Firewall Daemon','Root Sentinel','Polymorphic Stub','Quarantine Bot'];
+const EXPLOITS = ['CVE-2024-31337','SQLi-x86','BufferRot','PrivEsc-7','HeapSpray',
+                  'ShellSquirt','TLSDowngrade','DnsRebind','ARPFlood','ZeroPivot',
+                  'RopChain','UnicodeOverflow','RaceWindow','SymlinkRace'];
+
+/* ============================================================
+   HELPERS
+   ============================================================ */
+const pick = a => a[Math.floor(Math.random()*a.length)];
+const rand = (a,b) => Math.floor(a + Math.random()*(b-a));
+const pad = (n,w) => String(n).padStart(w,'0');
+const weighted = list => {
+  const total = list.reduce((s,x)=>s+x.w,0);
+  let r = Math.random()*total;
+  for (const x of list) { r -= x.w; if (r<=0) return x; }
+  return list[0];
+};
+const fmtTime = sec => `${pad(Math.floor(sec/3600),2)}:${pad(Math.floor((sec%3600)/60),2)}:${pad(sec%60,2)}`;
+const ts = () => {
+  const d = new Date();
+  return `${pad(d.getHours(),2)}:${pad(d.getMinutes(),2)}:${pad(d.getSeconds(),2)}`;
+};
+
+function appendLine(paneId, html) {
+  const pane = document.getElementById(paneId);
+  const line = document.createElement('span');
+  line.className = 'line';
+  line.innerHTML = html;
+  pane.appendChild(line);
+  // trim from top until newest fits
+  while (pane.scrollHeight > pane.clientHeight && pane.firstChild) {
+    pane.removeChild(pane.firstChild);
+  }
+}
+
+/* ============================================================
+   SHARED LOOT BUS — populated by combat & loot-stream panes,
+   consumed by the OPERATOR CONSOLE so its commands reference
+   real items the player just got.
+   ============================================================ */
+const recentLoot = [];
+function pushLoot(name, rarityName, cls) {
+  recentLoot.push({ name, rarity: rarityName, cls });
+  if (recentLoot.length > 24) recentLoot.shift();
+}
+
+/* ============================================================
+   COMBAT FEED — one fight at a time, ~5s progress bar.
+   Enemy level + reward scaling reads the CURRENT zone, so as
+   the zone rotates upward, you can watch the numbers climb.
+   Loot drops are NOT shown here — every win triggers exactly
+   one entry in the LOOT STREAM pane (see emitLoot below).
+   ============================================================ */
+let kills = 0;
+let credits = 0;
+let xpTotal = 0;
+let streak = 0;          // owned by combatTick: ++ on win, reset to 0 on loss
+
+const COMBAT_DURATION_MS = 5000;
+let activeCombatLine = null;
+let combatStart = 0;
+let combatEnemy = '';
+let combatLvl = 0;
+let combatDowntimeUntil = 0;
+
+function combatTick() {
+  const now = Date.now();
+  if (now < combatDowntimeUntil) return;
+
+  if (!activeCombatLine) {
+    const z = ZONE_DATA[zoneIdx];
+    combatEnemy = pick(ENEMIES);
+    combatLvl = rand(z.levelMin, z.levelMax + 1);
+    combatStart = now;
+    activeCombatLine = document.createElement('span');
+    activeCombatLine.className = 'line';
+    const pane = document.getElementById('combat');
+    pane.appendChild(activeCombatLine);
+    while (pane.scrollHeight > pane.clientHeight && pane.firstChild !== activeCombatLine) {
+      pane.removeChild(pane.firstChild);
+    }
+  }
+
+  const elapsed = now - combatStart;
+  const pct = Math.min(1, elapsed / COMBAT_DURATION_MS);
+
+  if (pct < 1) {
+    activeCombatLine.innerHTML =
+      `<span class="dim">[${ts()}]</span> <span class="warn">HACKING</span> ${combatEnemy} ` +
+      `<span class="dim">Lv.${combatLvl.toLocaleString()}</span> <span class="acc">${bar(pct, 18)}</span> ` +
+      `<span class="dim">${Math.floor(pct * 100)}%</span>`;
+    return;
+  }
+
+  // resolve fight — rewards scale with enemy level × zone credits multiplier
+  const z = ZONE_DATA[zoneIdx];
+  const win = Math.random() < 0.92;
+  if (win) {
+    const c  = Math.max(1, Math.round(combatLvl * (0.8 + Math.random() * 1.7) * z.creditsMult));
+    const xp = Math.max(1, Math.round(combatLvl * (0.4 + Math.random() * 0.8)));
+    credits += c; xpTotal += xp; kills++;
+    streak++;
+    document.getElementById('op-streak').textContent = streak.toLocaleString();
+
+    // Rare chip drop — Chips are a separate currency from Credits.
+    // ~12% chance per win; amount scales gently with enemy level.
+    let chipHtml = '';
+    if (Math.random() < 0.12) {
+      const chips = rand(1, 50) + Math.floor(combatLvl / 100);
+      chipHtml = ` <span class="chip">[+${chips.toLocaleString()} chips]</span>`;
+    }
+
+    activeCombatLine.innerHTML =
+      `<span class="dim">[${ts()}]</span> <span class="acc">DEFEAT</span> ${combatEnemy} ` +
+      `<span class="dim">Lv.${combatLvl.toLocaleString()}</span> ` +
+      `<span class="spec">+${xp.toLocaleString()}xp</span> ` +
+      `<span class="warn">+$${c.toLocaleString()}</span>${chipHtml}`;
+    combatDowntimeUntil = now + 700;
+
+    // Every successful hack pushes one drop into the LOOT STREAM.
+    emitLoot(combatLvl);
+  } else {
+    activeCombatLine.innerHTML =
+      `<span class="dim">[${ts()}]</span> <span class="err">CONNECTION LOST</span> ${combatEnemy} ` +
+      `<span class="dim">Lv.${combatLvl.toLocaleString()} — 5s downtime</span>`;
+    combatDowntimeUntil = now + 2400;
+    streak = 0;
+    document.getElementById('op-streak').textContent = '0';
+  }
+  activeCombatLine = null;
+}
+setInterval(combatTick, 110);
+
+/* ============================================================
+   NETWORK RECON — multi-step operations queued one line at a
+   time. When the queue empties, a new operation is picked and
+   pushes 1-7 related line factories onto the queue. Factories
+   (vs raw strings) let each line generate its own ts() at draw
+   time, so the timestamps advance through the operation.
+   ============================================================ */
+const randIp = () => `${rand(10,255)}.${rand(0,255)}.${rand(0,255)}.${rand(1,254)}`;
+const reconQueue = [];
+
+const RECON_OPS = [
+  // ---- Port sweep (5 lines)
+  () => {
+    const ip = randIp();
+    reconQueue.push(() => `<span class="dim">[${ts()}]</span> nmap -sS -T4 <span class="acc">${ip}</span> <span class="dim">(1-65535)</span>`);
+    reconQueue.push(() => `<span class="dim">[${ts()}]</span> <span class="acc">${ip}:22</span>   <span class="warn">OPEN</span>     <span class="dim">openssh 9.3</span>`);
+    reconQueue.push(() => `<span class="dim">[${ts()}]</span> <span class="acc">${ip}:443</span>  <span class="warn">OPEN</span>     <span class="dim">nginx/1.24 (TLS 1.3)</span>`);
+    reconQueue.push(() => `<span class="dim">[${ts()}]</span> <span class="acc">${ip}:8443</span> <span class="err">FILTERED</span> <span class="dim">no response</span>`);
+    reconQueue.push(() => `<span class="dim">[${ts()}]</span> sweep complete <span class="warn">2 open</span>, <span class="dim">1 filt, ${rand(1018,1024)} closed</span>`);
+  },
+
+  // ---- SSH brute force (4 lines)
+  () => {
+    const ip = randIp();
+    const goodUser = pick(['operator','sysadmin','svc_deploy','ops_root']);
+    const goodPass = pick(['n3xus_2024','m4tr1x_pwd','gh0st_in_w1re','tr1ck_or_h4x','c0ld_b00t!']);
+    reconQueue.push(() => `<span class="dim">[${ts()}]</span> hydra -L users.txt -P rockyou.txt ssh://<span class="acc">${ip}</span>`);
+    reconQueue.push(() => `<span class="dim">[${ts()}]</span> <span class="dim">  root:admin123 ......... REJECTED</span>`);
+    reconQueue.push(() => `<span class="dim">[${ts()}]</span> <span class="dim">  root:Password1 ........ REJECTED</span>`);
+    reconQueue.push(() => `<span class="dim">[${ts()}]</span> <span class="warn">  ${goodUser}:${goodPass} → ACCEPTED</span> <span class="acc">[shell]</span>`);
+  },
+
+  // ---- Exploit chain (4 lines)
+  () => {
+    const cve = pick(EXPLOITS);
+    const success = Math.random() < 0.7;
+    reconQueue.push(() => `<span class="dim">[${ts()}]</span> loading exploit <span class="spec">${cve}</span> ...`);
+    reconQueue.push(() => `<span class="dim">[${ts()}]</span> payload <span class="acc">${rand(64,4096)}B</span> encoded x86_64, ROP gadgets resolved`);
+    reconQueue.push(() => `<span class="dim">[${ts()}]</span> firing payload at <span class="acc">${randIp()}</span> ...`);
+    reconQueue.push(() => success
+      ? `<span class="dim">[${ts()}]</span> <span class="warn">SHELL OBTAINED</span> <span class="dim">uid=0(root) gid=0(root)</span>`
+      : `<span class="dim">[${ts()}]</span> <span class="err">EXPLOIT FAILED</span> <span class="dim">target patched (CVE backport detected)</span>`
+    );
+  },
+
+  // ---- Packet capture + cred extract (3 lines)
+  () => {
+    const iface = pick(['eth0','wlan0','tun0','vxlan42']);
+    reconQueue.push(() => `<span class="dim">[${ts()}]</span> tcpdump -i <span class="acc">${iface}</span> 'port 443 or port 80'`);
+    reconQueue.push(() => `<span class="dim">[${ts()}]</span> captured <span class="warn">${rand(1000,99999).toLocaleString()}</span> packets, dumping to <span class="dim">/tmp/cap.pcap</span>`);
+    reconQueue.push(() => `<span class="dim">[${ts()}]</span> extracting credentials ... <span class="warn">${rand(0,12)}</span> tokens, <span class="warn">${rand(0,4)}</span> session cookies`);
+  },
+
+  // ---- Traceroute (1 + 3-6 hops)
+  () => {
+    const ip = randIp();
+    const hops = rand(3, 7);
+    reconQueue.push(() => `<span class="dim">[${ts()}]</span> traceroute <span class="acc">${ip}</span> <span class="dim">(max 30 hops)</span>`);
+    for (let i = 1; i <= hops; i++) {
+      const hopIp = randIp();
+      const lat = rand(2, 180);
+      reconQueue.push(() => `<span class="dim">[${ts()}]</span> <span class="dim">  ${String(i).padStart(2)}.</span> <span class="acc">${hopIp.padEnd(16)}</span> <span class="dim">${lat}ms</span>`);
+    }
+  },
+
+  // ---- DNS exfil (2 lines)
+  () => {
+    const c2 = pick(['evil.example.com','c2.darknet.io','beacon.lab','dns.shadow.net']);
+    reconQueue.push(() => `<span class="dim">[${ts()}]</span> DNS tunnel established → <span class="acc">${c2}</span>`);
+    reconQueue.push(() => `<span class="dim">[${ts()}]</span> exfiltrating <span class="warn">${rand(2,32)}KB</span> via TXT records <span class="dim">(throttled)</span>`);
+  },
+
+  // ---- ARP MITM (2 lines)
+  () => {
+    reconQueue.push(() => `<span class="dim">[${ts()}]</span> ARP cache poisoned → <span class="acc">${rand(2,12)}</span> hosts redirected`);
+    reconQueue.push(() => `<span class="dim">[${ts()}]</span> MITM active on gateway <span class="acc">${randIp()}</span> <span class="dim">forwarding to attacker</span>`);
+  },
+
+  // ---- TLS handshake + cert grab (2 lines)
+  () => {
+    const ip = randIp();
+    reconQueue.push(() => `<span class="dim">[${ts()}]</span> <span class="warn">HANDSHAKE</span> tls1.3 ${ip} <span class="dim">cipher=${pick(['CHACHA20_POLY1305','AES_256_GCM','AES_128_GCM'])}</span>`);
+    reconQueue.push(() => `<span class="dim">[${ts()}]</span> certificate: CN=<span class="acc">${pick(['*.megacorp.io','api.govnet.gov','ledger.bank.tld','router.lab'])}</span> SAN=<span class="dim">${rand(2,15)} entries</span>`);
+  },
+
+  // ---- Single-line filler ops (kept for variety / rhythm)
+  () => reconQueue.push(() => `<span class="dim">[${ts()}]</span> <span class="err">DETECTED</span> ${pick(['IDS sentinel','honeypot signature','TLS-pinned response','rate-limit threshold','HSTS preload','EDR heartbeat','canary token tripped'])}`),
+  () => reconQueue.push(() => `<span class="dim">[${ts()}]</span> routing through <span class="acc">${rand(3,9)}</span> proxy hops <span class="dim">latency=${rand(40,420)}ms</span>`),
+  () => reconQueue.push(() => `<span class="dim">[${ts()}]</span> fingerprint: <span class="acc">${pick(['nginx/1.24','OpenSSH 9.3','IIS/10.0','Apache/2.4.58','PowerShell-Remoting','PostgreSQL 16','Redis 7.2','MongoDB 7.0'])}</span>`),
+  () => reconQueue.push(() => `<span class="dim">[${ts()}]</span> <span class="warn">DECRYPTING</span> ${rand(64,4096)}B ciphertext <span class="dim">est. ${rand(1,12)}s</span>`)
+];
+
+function reconTick() {
+  if (reconQueue.length > 0) {
+    appendLine('recon', reconQueue.shift()());
+    return;
+  }
+  pick(RECON_OPS)();
+}
+setInterval(reconTick, 320);
+
+/* ============================================================
+   RESOURCE TELEMETRY — only ONE gathering skill ticks at a time,
+   per the game's "one gather + one combat" rule. Click a skill
+   button to switch which resource is actively generating.
+   ============================================================ */
+const resCounts = { Snippets: 8421000, Cycles: 6230000, Hashes: 4910000, Packets: 5602000 };
+const resRates  = { Snippets: 12, Cycles: 9, Hashes: 7, Packets: 8 };
+const SKILL_TO_RES = { Coding: 'Snippets', Computing: 'Cycles', Mining: 'Hashes', Sniffing: 'Packets' };
+let activeSkill = 'Coding';
+
+function bar(pct, width=20) {
+  const filled = Math.max(0, Math.min(width, Math.round(pct*width)));
+  return '█'.repeat(filled) + '░'.repeat(width-filled);
+}
+
+(function initResourcePane() {
+  const pane = document.getElementById('resources');
+  pane.innerHTML =
+    '<div class="skill-row">' +
+      '<button class="skill-btn active" data-skill="Coding">CODING</button>' +
+      '<button class="skill-btn" data-skill="Computing">COMPUTING</button>' +
+      '<button class="skill-btn" data-skill="Mining">MINING</button>' +
+      '<button class="skill-btn" data-skill="Sniffing">SNIFFING</button>' +
+    '</div>' +
+    '<div id="resource-stats" class="resource-stats"></div>';
+  pane.querySelectorAll('.skill-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      pane.querySelectorAll('.skill-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      activeSkill = btn.dataset.skill;
+    });
+  });
+})();
+
+/* ---- Per-skill visualizations: each tab gets its own "work feed" ---- */
+const HEX_CHARS_LC = '0123456789abcdef';
+function randHexStr(n) {
+  let s = '';
+  for (let i = 0; i < n; i++) s += HEX_CHARS_LC[Math.floor(Math.random()*16)];
+  return s;
+}
+
+const CODE_LINES = [
+  { txt: 'def craft_payload(target):',          kind: 'def' },
+  { txt: '    shell = pack("<I", 0xdeadbeef)',  kind: 'code' },
+  { txt: '    return shell + nopsled(64)',      kind: 'code' },
+  { txt: '',                                    kind: 'code' },
+  { txt: 'for i in range(N):',                  kind: 'kw' },
+  { txt: '    yield mutate(payload, key=i)',    kind: 'code' },
+  { txt: '',                                    kind: 'code' },
+  { txt: 'class Exploit:',                      kind: 'def' },
+  { txt: '    def __init__(self, cve):',        kind: 'def' },
+  { txt: '        self.cve = cve',              kind: 'code' },
+  { txt: '        self.gadgets = resolve_rop()',kind: 'code' },
+  { txt: '    def fire(self, addr):',           kind: 'def' },
+  { txt: '        return inject(addr, payload)',kind: 'code' },
+  { txt: '',                                    kind: 'code' },
+  { txt: '# bypass DEP via ROP gadgets',        kind: 'comment' },
+  { txt: 'syscall_table = scan_kernel()',       kind: 'code' },
+  { txt: 'leak = arbitrary_read(0xc0ffee)',     kind: 'code' },
+  { txt: '',                                    kind: 'code' },
+  { txt: 'with open("kit.bin", "rb") as f:',    kind: 'kw' },
+  { txt: '    data = f.read()',                 kind: 'code' },
+  { txt: '    decoded = xor(data, key)',        kind: 'code' }
+];
+const CODE_FILES = [
+  'exploit_kit/payload.py','rop_chain/builder.py','shellcode/encoder.py',
+  'fuzzer/main.py','crypto/oracle.py','mitm/relay.py',
+  'persistence/cron.py','evasion/sandbox.py'
+];
+const PROTOCOLS    = ['TCP','UDP','ICMP','TLS','HTTP','DNS'];
+const COMMON_PORTS = [22, 53, 80, 443, 3306, 3389, 5432, 8080, 8443, 5985];
+
+function renderHeader(skillLabel, resName, pct, rate) {
+  return `<span class="acc">ACTIVE GATHERING:</span> <span class="warn">${skillLabel}</span> ` +
+         `<span class="dim">→ ${resName}</span>\n` +
+         `<span class="acc">${bar(pct, 25)}</span>  ` +
+         `<span class="dim">${Math.floor(pct*100)}%</span>  ` +
+         `<span class="spec">+${rate}/s</span>\n\n`;
+}
+
+function renderCoding(pct, rate) {
+  const codeOffset = Math.floor(Date.now() / 1000) % CODE_LINES.length;
+  const filename   = CODE_FILES[Math.floor(Date.now() / 8000) % CODE_FILES.length];
+  const baseLine   = 142 + codeOffset;
+
+  let html = renderHeader('CODING', 'Snippets', pct, rate);
+  html += `<span class="dim">SNIPPETS:</span>  <span class="warn">${resCounts.Snippets.toLocaleString()}</span>\n\n`;
+  html += `<span class="dim">$ vim ${filename}</span>\n`;
+  for (let i = 0; i < 5; i++) {
+    const line = CODE_LINES[(codeOffset + i) % CODE_LINES.length];
+    const cls = line.kind === 'comment' ? 'dim'
+              : line.kind === 'def'     ? 'acc'
+              : line.kind === 'kw'      ? 'warn'
+                                        : 'spec';
+    html += `<span class="dim">${String(baseLine + i).padStart(4)}</span>  ` +
+            `<span class="${cls}">${escHtml(line.txt)}</span>\n`;
+  }
+  const commits = 8000 + Math.floor((Date.now() - startTime) / 8000);
+  const lpm     = 1800 + (Date.now() % 200);
+  html += `\n<span class="dim">COMMITS:</span> <span class="warn">${commits.toLocaleString()}</span>  ` +
+          `<span class="dim">LINES/MIN:</span> <span class="warn">${lpm}</span>`;
+  return html;
+}
+
+function renderComputing(pct, rate) {
+  let html = renderHeader('COMPUTING', 'Cycles', pct, rate);
+  html += `<span class="dim">CYCLES:</span>  <span class="warn">${resCounts.Cycles.toLocaleString()}</span>\n\n`;
+  for (let i = 0; i < 4; i++) {
+    const cpuPct = 0.45 + Math.sin(Date.now()/700 + i*1.3)*0.30 + 0.15;
+    const filled = Math.max(0, Math.min(16, Math.round(cpuPct * 16)));
+    const cpubar = '▰'.repeat(filled) + '▱'.repeat(16 - filled);
+    html += `<span class="dim">CPU${i}</span>  <span class="acc">${cpubar}</span>  ` +
+            `<span class="warn">${String(Math.floor(cpuPct*100)).padStart(2)}%</span>\n`;
+  }
+  const freq = (4.5 + Math.sin(Date.now()/1500)*0.4).toFixed(1);
+  const temp = 65 + Math.floor(Math.sin(Date.now()/2200)*5);
+  html += `\n<span class="dim">FREQ:</span> <span class="warn">${freq} GHz</span>  ` +
+          `<span class="dim">TEMP:</span> <span class="warn">${temp}°C</span>  ` +
+          `<span class="dim">THREADS:</span> <span class="warn">24</span>`;
+  return html;
+}
+
+function renderMining(pct, rate) {
+  let html = renderHeader('MINING', 'Hashes', pct, rate);
+  html += `<span class="dim">HASHES:</span>  <span class="warn">${resCounts.Hashes.toLocaleString()}</span>\n\n`;
+  const hashrate = (24.0 + Math.sin(Date.now()/2000)*1.5).toFixed(1);
+  const blocks   = 142 + Math.floor((Date.now() - startTime) / 30000);
+  html += `<span class="dim">HASHRATE:</span>     <span class="warn">${hashrate} TH/s</span>\n`;
+  html += `<span class="dim">BLOCKS FOUND:</span> <span class="warn">${blocks.toLocaleString()}</span>\n`;
+  html += `<span class="dim">DIFFICULTY:</span>   <span class="spec">0x${randHexStr(8)}</span>\n\n`;
+  html += `<span class="dim">CURRENT HASH:</span>\n`;
+  html += `<span class="acc">${randHexStr(40)}</span>\n\n`;
+  html += `<span class="dim">NONCE:</span> <span class="spec">0x${randHexStr(8)}</span>`;
+  return html;
+}
+
+function renderSniffing(pct, rate) {
+  let html = renderHeader('SNIFFING', 'Packets', pct, rate);
+  html += `<span class="dim">PACKETS:</span>  <span class="warn">${resCounts.Packets.toLocaleString()}</span>\n\n`;
+  for (let i = 0; i < 5; i++) {
+    const src   = randIp();
+    const dst   = randIp();
+    const proto = pick(PROTOCOLS);
+    const port  = pick(COMMON_PORTS);
+    html += `<span class="dim">${src.padEnd(15)}</span> <span class="acc">→</span> ` +
+            `<span class="dim">${dst.padEnd(15)}</span> ` +
+            `<span class="warn">${proto.padEnd(4)}</span> ` +
+            `<span class="spec">${String(port).padStart(4)}</span>\n`;
+  }
+  const mbps = (12.0 + Math.sin(Date.now()/1800)*3.0).toFixed(1);
+  const drop = (0.01 + Math.random()*0.04).toFixed(2);
+  html += `\n<span class="dim">IFACE:</span> <span class="warn">eth0</span>  ` +
+          `<span class="dim">RATE:</span> <span class="warn">${mbps} Mbps</span>  ` +
+          `<span class="dim">DROP:</span> <span class="warn">${drop}%</span>`;
+  return html;
+}
+
+const SKILL_RENDERERS = {
+  Coding:    renderCoding,
+  Computing: renderComputing,
+  Mining:    renderMining,
+  Sniffing:  renderSniffing
+};
+
+function resTick() {
+  const activeRes = SKILL_TO_RES[activeSkill];
+  resCounts[activeRes] += resRates[activeRes] + rand(-2, 3);
+  const pct  = 0.35 + Math.sin(Date.now()/1800)*0.30 + 0.30;
+  const rate = resRates[activeRes] + rand(-1, 2);
+  document.getElementById('resource-stats').innerHTML = SKILL_RENDERERS[activeSkill](pct, rate);
+}
+setInterval(resTick, 250);
+
+/* ============================================================
+   MEMORY DUMP — fastest "movie hacking" pane.
+   Mostly raw 16-byte hex rows, but periodically:
+     - region/segment markers (.text / .heap / .stack / etc.)
+     - injected ASCII strings spelling game vocab (trgKai, ASCND,
+       KERNEL, EPIC_DROP, etc.) so the dev catches their own names
+     - highlighted "MATCH" lines for that "scanning for signatures"
+       movie feel
+   ============================================================ */
+let hexAddr = 0x7ffd4a3f0010;
+const HEX_REGIONS = [
+  { addr: 0x7ffd4a3f1000, label: '.text',   note: 'code segment'      },
+  { addr: 0x7ffd4a3fa000, label: '.data',   note: 'initialized data'  },
+  { addr: 0x7ffd4a3fc000, label: '.bss',    note: 'zero-initialized'  },
+  { addr: 0x7ffd4a3fe000, label: '.heap',   note: 'heap allocation'   },
+  { addr: 0x7ffd4a401000, label: '.stack',  note: 'thread stack'      },
+  { addr: 0x7ffd4a410000, label: '.shadow', note: 'guard page'        },
+  { addr: 0x7ffd4a420000, label: '.crypto', note: 'key material'      },
+  { addr: 0x7ffd4a430000, label: '.payload',note: 'staged shellcode'  }
+];
+const HEX_INJECT_STRINGS = [
+  'trgKai', 'ASCND', 'KERNEL', 'PAYLOAD', 'DAEMON', 'SHELL',
+  'ROUTER', 'FIREWALL', 'EXPLOIT', 'SIG_AFFIX', 'EPIC_DROP',
+  'ZERO_DAY', 'OPERATOR', 'MEGACORP', 'BACKDOOR', 'ROOTKIT'
+];
+
+function asciiOf(bytes) {
+  return bytes
+    .map(b => (b >= 32 && b < 127) ? String.fromCharCode(b) : '.')
+    .join('')
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+function hexOf(bytes) {
+  return bytes.map(b => pad(b.toString(16), 2)).join(' ');
+}
+
+function hexTick() {
+  const roll = Math.random();
+
+  // ~4%: region/segment marker
+  if (roll < 0.04) {
+    const region = pick(HEX_REGIONS);
+    appendLine('hexdump',
+      `<span class="acc">--- 0x${region.addr.toString(16).padStart(12,'0')} [${region.label}]</span> ` +
+      `<span class="dim">${region.note}</span>`
+    );
+    return;
+  }
+
+  // ~5%: highlighted "match found" line (epic flavor)
+  if (roll < 0.09) {
+    const bytes = [];
+    for (let i = 0; i < 16; i++) bytes.push(rand(0, 255));
+    const addr = hexAddr.toString(16).padStart(12, '0');
+    hexAddr += 16;
+    appendLine('hexdump',
+      `<span class="hex-addr">${addr}</span>  ` +
+      `<span class="warn">${hexOf(bytes)}</span>  ` +
+      `<span class="warn">${asciiOf(bytes)}</span> <span class="err">[MATCH]</span>`
+    );
+    return;
+  }
+
+  // ~14%: hex line with an embedded readable string (game vocab)
+  if (roll < 0.23) {
+    const bytes = [];
+    for (let i = 0; i < 16; i++) bytes.push(rand(0, 255));
+    const str = pick(HEX_INJECT_STRINGS);
+    const offset = rand(0, 17 - str.length);
+    for (let i = 0; i < str.length; i++) bytes[offset + i] = str.charCodeAt(i);
+    const addr = hexAddr.toString(16).padStart(12, '0');
+    hexAddr += 16;
+    appendLine('hexdump',
+      `<span class="hex-addr">${addr}</span>  ` +
+      `<span class="hex-byte">${hexOf(bytes)}</span>  ` +
+      `<span class="spec">${asciiOf(bytes)}</span>`
+    );
+    return;
+  }
+
+  // standard hex row
+  const bytes = [];
+  for (let i = 0; i < 16; i++) bytes.push(rand(0, 255));
+  const addr = hexAddr.toString(16).padStart(12, '0');
+  hexAddr += 16;
+  appendLine('hexdump',
+    `<span class="hex-addr">${addr}</span>  ` +
+    `<span class="hex-byte">${hexOf(bytes)}</span>  ` +
+    `<span class="hex-ascii">${asciiOf(bytes)}</span>`
+  );
+}
+setInterval(hexTick, 110);
+
+/* ============================================================
+   OPERATOR CONSOLE — simulated terminal. Types commands
+   character-by-character, references items the LOOT STREAM
+   actually dropped, and shows realistic crafting / equipping /
+   marketplace output. State machine: idle → typing → output → pause.
+   ============================================================ */
+const TERMINAL_PROMPT = 'trgKai@megacorp-nexus:~$ ';
+const SLOTS = ['head','chest','gloves','boots','main_hand','off_hand','acc1','acc2'];
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+function pickLoot() {
+  if (!recentLoot.length) return null;
+  return recentLoot[rand(0, recentLoot.length)];
+}
+
+const COMMAND_TEMPLATES = [
+  () => {
+    const i = pickLoot(); if (!i) return null;
+    const slot = pick(SLOTS);
+    return {
+      cmd: `equip "${i.name}" --slot ${slot}`,
+      out: [
+        `<span class="acc">[OK]</span> Item equipped → <span class="warn">${slot}</span>`,
+        `<span class="dim">  bonuses applied: +${rand(8,28)} attack, +${rand(4,18)}% attack speed</span>`
+      ]
+    };
+  },
+  () => {
+    const i = pickLoot(); if (!i) return null;
+    const stat = pick(['Defense','Attack','Regen','Crit Chance','Max HP','Accuracy']);
+    return {
+      cmd: `enhance "${i.name}" --op augment`,
+      out: [
+        `<span class="acc">[+]</span> Augment → <span class="warn">+${rand(4,18)} ${stat}</span> <span class="dim">(T${rand(2,7)} prefix)</span>`,
+        `<span class="dim">  stability: ${rand(15,28)} → ${rand(14,27)}</span>`
+      ]
+    };
+  },
+  () => {
+    const i = pickLoot(); if (!i) return null;
+    const stat = pick(['Attack Speed','Crit','Evasion','Thorns']);
+    return {
+      cmd: `enhance "${i.name}" --op refactor`,
+      out: [`<span class="acc">[~]</span> Refactor → <span class="warn">+${rand(2,10)}% ${stat}</span> <span class="dim">(was +${rand(1,8)}%)</span>`]
+    };
+  },
+  () => {
+    const i = pickLoot(); if (!i) return null;
+    return {
+      cmd: `enhance "${i.name}" --op lock --affix prefix${rand(1,3)}`,
+      out: [`<span class="acc">[LOCK]</span> Affix protected from removal <span class="dim">(1 stabilizer used)</span>`]
+    };
+  },
+  () => {
+    const i = pickLoot(); if (!i) return null;
+    return {
+      cmd: `enhance "${i.name}" --op compile`,
+      out: [
+        `<span class="warn">[!]</span> Compile is permanent. Confirming...`,
+        `<span class="acc">[OK]</span> +${(0.5 * rand(15,28)).toFixed(1)}% bonus applied to non-signature affixes`
+      ]
+    };
+  },
+  () => {
+    const i = pickLoot(); if (!i) return null;
+    const success = Math.random() < 0.45;
+    return {
+      cmd: `enhance "${i.name}" --op version-upgrade`,
+      out: success
+        ? [`<span class="acc">[OK]</span> Tier upgrade success → T${rand(3,5)} → T${rand(1,3)}`]
+        : [
+            `<span class="err">[FAIL]</span> Version upgrade failed → -1 stability`,
+            `<span class="dim">  affix tier unchanged</span>`
+          ]
+    };
+  },
+  () => {
+    const i = pickLoot(); if (!i) return null;
+    const ess = pick(['attack','defense','regen','crit','evasion']);
+    return {
+      cmd: `enhance "${i.name}" --op bias-reroll --essence ${ess}`,
+      out: [
+        `<span class="acc">[~]</span> Bias reroll → guaranteed <span class="warn">${ess}</span> essence`,
+        `<span class="dim">  consumed: 1 essence, ${rand(50000,500000).toLocaleString()} credits</span>`
+      ]
+    };
+  },
+  () => {
+    const i = pickLoot(); if (!i) return null;
+    const r1 = pick(RESOURCES), r2 = pick(RESOURCES);
+    return {
+      cmd: `decompile "${i.name}"`,
+      out: [
+        `<span class="acc">[~]</span> Item decompiled →`,
+        `<span class="dim">  +${rand(20,180)} ${r1}, +${rand(10,80)} ${r2}, +${rand(0,3)} stabilizers</span>`
+      ]
+    };
+  },
+  () => {
+    const i = pickLoot(); if (!i) return null;
+    const price = rand(50000, 5000000);
+    return {
+      cmd: `market list "${i.name}" --price ${price.toLocaleString()}`,
+      out: [`<span class="acc">[OK]</span> Listed on marketplace <span class="dim">(expires 24h)</span>`]
+    };
+  },
+  () => ({
+    cmd: `loot-filter add --rarity ${pick(['epic','rare','uncommon'])} --action ${pick(['keep','decompile','lock'])}`,
+    out: [`<span class="acc">[OK]</span> Loot filter rule added <span class="dim">(${rand(2,8)} rules active)</span>`]
+  }),
+  () => ({
+    cmd: `contract claim --id ${rand(1,30)}`,
+    out: [`<span class="acc">[OK]</span> Contract complete → <span class="warn">+${rand(50000,500000).toLocaleString()}c</span>, <span class="warn">+${rand(2,12)} hackcoin</span>`]
+  }),
+  () => ({
+    cmd: `syndicate boost activate --type ${pick(['hack_xp','attack','defense','regen','accuracy','evasion'])} --duration 24h`,
+    out: [
+      `<span class="acc">[OK]</span> <span class="warn">[ASCND] Ascend</span> boost activated`,
+      `<span class="dim">  treasury: -${rand(50000,500000).toLocaleString()}c, members affected: ${rand(18,42)}</span>`
+    ]
+  })
+];
+
+let termState = 'idle';   // idle | typing | output | pause
+let termCmd = '';
+let termTyped = '';
+let termOut = [];
+let termOutIdx = 0;
+let termActiveLine = null;
+let termNextTick = 0;
+
+function termStartCommand() {
+  let cmd = null;
+  for (let i = 0; i < 8 && !cmd; i++) cmd = pick(COMMAND_TEMPLATES)();
+  if (!cmd) {
+    cmd = { cmd: `status --rig`, out: [`<span class="acc">[OK]</span> Rig: <span class="warn">QUANTUM-XII</span>, all subsystems nominal`] };
+  }
+  termCmd = cmd.cmd;
+  termOut = cmd.out;
+  termTyped = '';
+  termOutIdx = 0;
+  termState = 'typing';
+
+  termActiveLine = document.createElement('span');
+  termActiveLine.className = 'line';
+  const pane = document.getElementById('terminal');
+  pane.appendChild(termActiveLine);
+  while (pane.scrollHeight > pane.clientHeight && pane.firstChild !== termActiveLine) {
+    pane.removeChild(pane.firstChild);
+  }
+}
+
+function termTick() {
+  const now = Date.now();
+  if (now < termNextTick) return;
+
+  if (termState === 'idle') {
+    termStartCommand();
+    termNextTick = now + 150;
+    return;
+  }
+  if (termState === 'typing') {
+    if (termTyped.length < termCmd.length) {
+      termTyped += termCmd.charAt(termTyped.length);
+      termActiveLine.innerHTML =
+        `<span class="dim">${TERMINAL_PROMPT}</span>` +
+        `<span class="acc">${escHtml(termTyped)}</span>` +
+        `<span class="blink">▌</span>`;
+      termNextTick = now + rand(22, 65);
+    } else {
+      termActiveLine.innerHTML =
+        `<span class="dim">${TERMINAL_PROMPT}</span><span class="acc">${escHtml(termCmd)}</span>`;
+      termActiveLine = null;
+      termState = 'output';
+      termNextTick = now + 240;
+    }
+    return;
+  }
+  if (termState === 'output') {
+    if (termOutIdx < termOut.length) {
+      const pane = document.getElementById('terminal');
+      const line = document.createElement('span');
+      line.className = 'line';
+      line.innerHTML = termOut[termOutIdx++];
+      pane.appendChild(line);
+      while (pane.scrollHeight > pane.clientHeight && pane.firstChild) {
+        pane.removeChild(pane.firstChild);
+      }
+      termNextTick = now + 320;
+    } else {
+      termState = 'pause';
+      termNextTick = now + rand(900, 1900);
+    }
+    return;
+  }
+  if (termState === 'pause') {
+    termState = 'idle';
+  }
+}
+setInterval(termTick, 28);
+
+/* ============================================================
+   LOOT STREAM — slowest cadence, gives epics time to land
+   ============================================================ */
+/* Loot drops are emitted ONLY by combat wins — no standalone timer.
+   Higher zones bias the rarity roll toward Uncommon / Rare / Epic
+   via the zone's rarityMult; ilvl scales with the kill's level. */
+function pickRarityForZone(mult) {
+  const list = RARITIES.map(r =>
+    (r.name === 'Basic' || r.name === 'Common') ? r : { ...r, w: r.w * mult }
+  );
+  return weighted(list);
+}
+
+function emitLoot(killLvl) {
+  const z = ZONE_DATA[zoneIdx];
+  const r = pickRarityForZone(z.rarityMult);
+  const item = `${pick(PREFIXES)} ${pick(ITEM_TYPES)} of ${pick(SUFFIXES)}`;
+  const jitter = Math.max(1, Math.floor(killLvl * 0.15));
+  const ilvl = Math.max(1, killLvl + rand(-jitter, jitter + 1));
+  const tier = `T${rand(1,9)}`;
+  const action = Math.random() < 0.6 ? `<span class="acc">KEEP</span>` : `<span class="dim">DECOMPILE</span>`;
+  pushLoot(item, r.name, r.cls);
+  appendLine('loot',
+    `<span class="dim">[${ts()}]</span> <span class="${r.cls}">[${r.name.toUpperCase().padEnd(8)}]</span> ` +
+    `<span class="${r.cls}">${item}</span> <span class="dim">ilvl ${ilvl.toLocaleString()} ${tier}</span> ${action}`
+  );
+}
+
+/* ============================================================
+   HEADER — uptime + zone rotation. Streak is owned by combatTick.
+   ============================================================ */
+const startTime = Date.now();
+setInterval(() => {
+  document.getElementById('op-uptime').textContent =
+    fmtTime(Math.floor((Date.now()-startTime)/1000));
+}, 1000);
+
+/* Cycle through all 8 in-game zones every 30 seconds, starting
+   at the lowest zone so the demo opens at LOCAL NETWORK Lv1+
+   and progressively reveals higher tiers and bigger reward numbers. */
+let zoneIdx = 0;
+setInterval(() => {
+  zoneIdx = (zoneIdx + 1) % ZONE_DATA.length;
+  const z = ZONE_DATA[zoneIdx];
+  document.getElementById('op-zone').textContent = `${z.name} Lv${z.lvl}`;
+}, 30000);
+
+/* ============================================================
+   OCCASIONAL ALERT — every ~30s, flash a fake critical event
+   ============================================================ */
+const ALERTS = [
+  'EPIC DROP DETECTED',
+  'IDS COUNTERMEASURE BREACH',
+  'ZONE BOSS SPAWN: BLACK ICE',
+  'SYNDICATE BOOST ACTIVATED',
+  'CONTRACT BOARD CLEARED',
+  'PRESTIGE THRESHOLD HIT'
+];
+function showAlert() {
+  const div = document.createElement('div');
+  div.className = 'alert-flash';
+  div.textContent = `▲  ${pick(ALERTS)}  ▲`;
+  document.body.appendChild(div);
+  setTimeout(() => div.remove(), 2200);
+}
+setInterval(() => { if (Math.random() < 0.5) showAlert(); }, 28000);
+
+/* ============================================================
+   ESC TO EXIT
+   ============================================================ */
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    document.body.innerHTML =
+      '<div style="padding:40px;font-family:VT323,monospace;font-size:42px;' +
+      'color:var(--text-color);text-align:center;margin-top:30vh;">' +
+      'CONNECTION TERMINATED.<br><br>' +
+      '<span style="font-size:18px;color:var(--dim-color);">' +
+      'Hollywood Mode disengaged. Refresh to reconnect.</span></div>';
+  }
+});
+
+/* ============================================================
+   PRIME THE PANES — pre-fill the static log panes so the demo
+   doesn't open empty. Combat & terminal are state machines and
+   animate naturally from t=0. emitLoot runs at the current zone
+   (index 0 = LOCAL NETWORK) so the seed drops match the opening
+   visual context.
+   ============================================================ */
+for (let i = 0; i < 6; i++) emitLoot(rand(1, 50));
+for (let i = 0; i < 8; i++) { reconTick(); hexTick(); hexTick(); }
+resTick();
+</script>
+</body>
+</html>
