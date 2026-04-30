@@ -88,5 +88,4 @@ This repo is a **pitch artifact**, not an official feature. The goal is to make 
 ## Credits
 
 - **Idle Hacking** — game by **trgKai** ([idlehacking.com](https://www.idlehacking.com))
-- **[ASCND] Ascend** — trgKai's syndicate, referenced throughout the demo
 - Demo concept and code by **judco**
