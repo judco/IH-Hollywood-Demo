@@ -83,7 +83,7 @@ Each pane is independent, so panes can be enabled incrementally as hooks become 
 
 ## Status
 
-This repo is a **pitch artifact**, not an official feature. The goal is to make the case for Hollywood Mode visually rather than verbally. Feedback, corrections, and pull requests welcome.
+This repo is a **pitch artifact**, not an official feature. The goal is to make the case for Hollywood Mode visually rather than verbally. Feedback welcome.
 
 ## Credits
 
